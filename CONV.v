@@ -5,11 +5,11 @@ module  CONV(
 	//system input
 	clk,
 	reset,
-	busy,	
-	ready,	
-	//image data read	
+	busy,
+	ready,
+	//image data read
 	iaddr,
-	idata,	
+	idata,
 	//conv mem write
 	cwr,
 	caddr_wr,
@@ -39,9 +39,9 @@ input  [19:0] 	cdata_rd;
 output [2:0]	csel;
 output [3:0]	state;
 
-reg 			busy; 		//ready to high 
+reg 			busy; 		//ready to high
 wire [11:0] 	iaddr; 		// pixel addr V
-reg 			crd; 		// conv read mem if 1 V 
+reg 			crd; 		// conv read mem if 1 V
 wire [11:0] 	caddr_rd; 	//conv read mem addr 
 reg 			cwr; 		//comv write enable if 1 V
 wire [19:0] 	cdata_wr; 	// write data 4 bit int and 16 bit float V 
@@ -50,12 +50,12 @@ reg [2:0]		csel; 		// 0 --> none 1 ---> layer 0 kernel 0 2 ---> layer 0 kernel 1
 wire [3:0] 		state;
 
 
-//define register to store data
+//define point 
 wire [39:0] 		conv_tmp1;
 wire [39:0] 		conv_tmp2;
 wire [19:0]			max_pool;
-reg [5:0] 			x;
-reg [5:0] 			y;
+reg [5:0] 			x;//用于跟踪当前像素的坐标，x最多63，若x=63時x再加1，x就是0
+reg [5:0] 			y;//用于跟踪当前像素的坐标，y最多63
 reg signed [39:0]	img_data1;
 reg signed [39:0]	img_data2;
 reg signed [19:0]	conv1_result;
@@ -65,7 +65,7 @@ reg signed [19:0]	now_kernel2;
 reg [3:0]			cur_state;
 reg [3:0]			next_state;
 //reg [3:0]			counter;
-reg [1:0]			row;
+reg [1:0]			row; //用来跟踪卷积运算在处理3x3卷积核时的当前行和列。
 reg [1:0]			col;
 wire signed [19:0]	read_buf;
 integer i;
@@ -110,18 +110,18 @@ parameter signed bias1 		= 20'hF7295;
 assign read_buf = ( ( row  + { 1'b0 , y } ) == 7'd0 || ( { 1'b0 , x } + col ) == 7'd0 || ( row  + { 1'b0 , y } ) == 7'd65 || ( { 1'b0 , x } + col ) == 7'd65 ) ? 20'd0 : idata; //zero padding when x at 0 or x at 65 or y = 0 or y = 65
 assign iaddr =  { ( ( { 4'b0000 , row } + y ) - 6'd1 ) , ( ( { 4'b0000 , col } + x ) - 6'd1 ) };
 //assign cdata_wr = ( cur_state == STORE_CONV1 ) ? conv1_result : conv2_result;
-assign cdata_wr = ( cur_state == STORE_CONV1 || cur_state == MAX_POOLING_AND_STORE_1 || cur_state == FLATTEN_1 ) ? conv1_result : conv2_result;
+assign cdata_wr = ( cur_state == STORE_CONV1 || cur_state == MAX_POOLING_AND_STORE_1 || cur_state == FLATTEN_1 ) ? conv1_result : conv2_result;//儲存各層的結果
 assign caddr_rd =  { ( { 4'b0000 , row } + y ) , ( { 4'b0000 , col } + x ) };
 assign conv_tmp1 = read_buf * now_kernel1;
 assign conv_tmp2 = read_buf * now_kernel2;
 assign max_pool = (cur_state == READ_CONV1_DATA ) ? ( ( conv1_result > cdata_rd ) ? conv1_result : cdata_rd ) : ( ( conv2_result > cdata_rd ) ? conv2_result : cdata_rd );
 assign x_plus1 = x + 1;
 assign state = cur_state;
-
+//kernel賦值
 always @ (*) begin
-	case ( (row << 1 ) + ( row + col ) )
+	case ( (row << 1 ) + ( row + col ) ) //row*3 + col
 		4'd0 : begin
-			now_kernel1 = kernel000;
+			now_kernel1 = kernel000;//now_kernel1 代表當前選擇的卷積核元素
 			now_kernel2 = kernel100;
 		end
 		4'd1 : begin
@@ -182,14 +182,14 @@ always @ ( posedge clk or posedge reset ) begin
 		case (cur_state)
 			INIT: begin
 				cur_state <= next_state;
-				busy <= 1'b0;
+				busy <= 1'b0;//不忙碌（即模块准备好进行新的操作或正在等待新的命令）。
 			end
 			READ_IMG_DATA : begin
-				busy <= 1'b1;
+				busy <= 1'b1;//忙碌中，新的資料不能進來
 				//counter <= counter + 1'b1;
 				cur_state <= next_state;
 				if ( col == 2'd0 && row == 2'd0 ) begin
-					img_data1 <= conv_tmp1 + {4'b0000,bias0,16'b0};
+					img_data1 <= conv_tmp1 + {4'b0000,bias0,16'b0};//只有第一次才要加bias，其他累加
 					img_data2 <= conv_tmp2 + {4'b1111,bias1,16'b0};
 				end
 				else begin
@@ -206,37 +206,37 @@ always @ ( posedge clk or posedge reset ) begin
 				end
 			end
 			CONV : begin
-				busy <= 1'b1;
+				busy <= 1'b1;//忙碌中，新的資料不能進來
 				cur_state <= next_state;
 				//counter <= 0;
-				row <= 0;
+				row <= 0;//初始化row與col，準備好進行新的卷積運算週期
 				col <= 0;
-				conv1_result <= ( img_data1[39] == 1'b1 ) ? 20'b0 : img_data1[35:16] + img_data1[15];
+				conv1_result <= ( img_data1[39] == 1'b1 ) ? 20'b0 : img_data1[35:16] + img_data1[15];//多加的img_data1[15]是滿足小數點後第17位四捨五入
 				conv2_result <= ( img_data2[39] == 1'b1 ) ? 20'b0 : img_data2[35:16] + img_data2[15];
 			end
 			STORE_CONV1 : begin
-				busy <= 1'b1;
+				busy <= 1'b1;//忙碌中，新的資料不能進來
 				cur_state <= next_state;
 			end
 			STORE_CONV2 : begin
-				busy <= 1'b1;
+				busy <= 1'b1;//忙碌中，新的資料不能進來
 				cur_state <= next_state;
-				x <= x + 6'd1;
-				if ( x == 6'd63 ) 
+				x <= x + 6'd1;//是每次进入STORE_CONV2状态时，把 x 的值增加1，x加超過63時會變成0。如此一來全部的pixel就可以全部存到
+				if ( x == 6'd63 )
 					y <= y + 6'd1;
-				else 
+				else //x != 63
 					y <= y;
 			end
 			READ_CONV1_DATA : begin
-				busy <= 1'b1;
-				//counter <= counter + 1'b1;
-				if ( col == 0 && row == 0) 
-					conv1_result <= cdata_rd;
-				else 
-					conv1_result <= max_pool;  
+				busy <= 1'b1;//忙碌中，新的資料不能進來
 				cur_state <= next_state;
-				if ( col == 2'd1 ) begin
-					row <= row + 2'd1;
+				//counter <= counter + 1'b1;
+				if ( col == 0 && row == 0)
+					conv1_result <= cdata_rd;//在池化窗口的起始位置，直接將 cdata_rd給conv1_result
+				else 
+					conv1_result <= max_pool;//池化窗口內的其他元素與已經儲存的conv1_result比較
+				if ( col == 2'd1 ) begin//2X2的池化窗口
+					row <= row + 2'd1;//使row = 1(代表池化窗口完成(col == 1 && row == 1))
 					col <= 2'd0;
 				end
 				else begin
@@ -245,11 +245,11 @@ always @ ( posedge clk or posedge reset ) begin
 				end
 			end
 			MAX_POOLING_AND_STORE_1 : begin
-				busy <= 1'b1;
+				busy <= 1'b1;//忙碌中，新的資料不能進來
 				cur_state <= next_state;
 			end
 			FLATTEN_1 : begin
-				busy <= 1'b1;
+				busy <= 1'b1;//忙碌中，新的資料不能進來
 				x <= x + 6'd2;
 				if ( x == 6'd62 ) 
 					y <= y + 6'd2;
@@ -261,6 +261,7 @@ always @ ( posedge clk or posedge reset ) begin
 			end
 			READ_CONV2_DATA : begin
 				busy <= 1'b1;
+				cur_state <= next_state;
 				if ( col == 0 && row == 0) 
 					conv2_result <= cdata_rd;
 				else 
@@ -274,7 +275,6 @@ always @ ( posedge clk or posedge reset ) begin
 					row <= row;
 					col <= col + 2'd1;
 				end
-				cur_state <= next_state;
 			end
 			MAX_POOLING_AND_STORE_2 : begin
 				busy <= 1'b1;
